@@ -39,48 +39,54 @@ SET stores the value as its native type - be it int or string. SET supports the 
 - NX: only set the key if it does not already exist
 - KEEPTTL: keep the existing TTL of the key even if some expiration param like EX, etc is provided
 
-Returns "OK" if the SET operation was successful.
+Returns "1" if the SET operation was successful (key was set or updated).
+Returns "0" if the key was not set due to XX or NX condition not being met.
 	`,
 	Examples: `
 localhost:7379> SET k 43
-OK
+1
 localhost:7379> SET k 43 EX 10
-OK
+1
 localhost:7379> SET k 43 PX 10000
-OK
+1
 localhost:7379> SET k 43 EXAT 1772377267
-OK
+1
 localhost:7379> SET k 43 PXAT 1772377267000
-OK
-localhost:7379> SET k 43 XX
-OK
+1
+localhost:7379> SET nonexistentkey value XX
+0
 localhost:7379> SET k 43 NX
-OK
+0
 localhost:7379> SET k 43 KEEPTTL
-OK
+1
 	`,
 	Eval:    evalSET,
 	Execute: executeSET,
 }
 
+var (
+	SETResNilRes = newSETRes(false)
+	SETResOKRes  = newSETRes(true)
+)
+
 func init() {
 	CommandRegistry.AddCommand(cSET)
 }
 
-func newSETRes() *CmdRes {
+func newSETRes(changed bool) *CmdRes {
+	value := "0"
+	if changed {
+		value = "1"
+	}
+
 	return &CmdRes{
 		Rs: &wire.Result{
-			Message:  "OK",
+			Message:  value,
 			Status:   wire.Status_OK,
 			Response: &wire.Result_SETRes{SETRes: &wire.SETRes{}},
 		},
 	}
 }
-
-var (
-	SETResNilRes = newSETRes()
-	SETResOKRes  = newSETRes()
-)
 
 // parseParams parses the parameters for the any command
 // and returns a map of the parameters and the remainder of the arguments
@@ -199,18 +205,18 @@ func evalSET(c *Cmd, s *dstore.Store) (*CmdRes, error) {
 	// Or, should we convert the existing type to the new type?
 	// Or, should we just overwrite the value?
 
-	// If XX is provided and the key does not exist, return nil
+	// If XX is provided and the key does not exist, return 0
 	// XX: only set the key if it already exists
-	// So, if it does not exist, we return nil and move on
+	// So, if it does not exist, we return false (not changed) and move on
 	if params[types.XX] != "" && existingObj == nil {
-		return SETResOKRes, nil
+		return newSETRes(false), nil
 	}
 
-	// If NX is provided and the key already exists, return nil
+	// If NX is provided and the key already exists, return 0
 	// NX: only set the key if it does not already exist
-	// So, if it does exist, we return nil and move on
+	// So, if it does exist, we return false (not changed) and move on
 	if params[types.NX] != "" && existingObj != nil {
-		return SETResOKRes, nil
+		return newSETRes(false), nil
 	}
 
 	newObj := CreateObjectFromValue(s, value, exDurationMs)
